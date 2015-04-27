@@ -4,29 +4,37 @@
 """
 silence_sounds.py
 
-A tool to iterate across a folder:
+A tool to iterate across a folder or process a single file:
  - identify MP3 files 
  - remove silence at start and end of file
  - rewrite out to the same file name.
- - single argument is the folder
+ - single argument is the folder or filename
 
 Usage defined by running with option -h.
 
 This tool can be run from the IDLE prompt using the start def, e.g.
-start('FOLDERNAME') 
+start('FOLDERNAME'). If this is the case then it seems like __file__
+should be uncommented and the name of the location placed there.
+
+TEST first. This code may eat your laundry. At the moment it is 
+using a -35 dB threshold as set in SOUND_THRESHOLD below. Adjust to suit.
 
 Thoughtful ideas most welcome. 
+
+TODO: 
+ - normalise sound levels across input files
+ - see if I can propose a patch to Anki?
 """
 
 __author__ = "Daniel Mulholland"
 __copyright__ = "Copyright 2015, Daniel Mulholland"
-__credits__ = ["As illustrated in the code"]
+__credits__ = ["pydub, Peter Carroll"]
 __license__ = "GPL"
-__version__ = '0.01'
+__version__ = '0.02'
 __maintainer__ = "Daniel Mulholland"
 __email__ = "dan.mulholland@gmail.com"
-__file__ = r'W:\Education\Current\AnkiTool\''
-__file__ = r'/media/alexandria/Education/Current/AnkiTool/silence_sounds.py'
+#__file__ = r'W:\Education\Current\AnkiTool\''
+#__file__ = r'/media/alexandria/Education/Current/pytooldev/anki-silence-sound/in/'
 
 import sys
 import os
@@ -36,8 +44,8 @@ import re
 
 from pydub import AudioSegment
 
-# INPUT_FOLDER = "in"
 BASE_PATH = os.path.dirname(os.path.realpath(__file__))
+SOUND_THRESHOLD = 35
 
 def start(arg=None):
     parser = argparse.ArgumentParser(
@@ -46,7 +54,7 @@ def start(arg=None):
 					'- remove start and end of sound'\
 					'- rewrite out to the same file name.'\
 					'- single argument is the folder',
-        epilog='Enjoy. Bug reports and feature requests welcome. Feel free to build a GUI :-)',
+        epilog='Enjoy. Bug reports and feature requests welcome.',
         prefix_chars='-/')
 
     parser.add_argument('path', metavar='PATH|FILE', nargs='?', default='in',
@@ -65,14 +73,13 @@ def start(arg=None):
     if path_result != None:
         for p_or_f in path_result:
             if os.path.isfile(p_or_f) == True:
-                # add file to the list
-                # !!
-                #files_to_do.append(os.path.realpath(os.path.join(root,p_or_f)))
-                # ???
-                print(p_or_f)
+                files_to_do.append(os.path.realpath(p_or_f))
+                # print(p_or_f)
             elif os.path.isdir(p_or_f) == True:
                 files_to_do += walkabout(p_or_f)
-    print files_to_do  
+    
+    # print files_to_do  
+    
     for f in files_to_do:
         if isMp3Valid(f):
             sound = AudioSegment.from_file(f, format="mp3")
@@ -81,9 +88,23 @@ def start(arg=None):
             # (take the approach of reverse the sound)
             end_trim = detect_leading_silence(sound.reverse())
             duration = len(sound)
-            trimmed_sound = sound[start_trim:duration-end_trim]
-            trimmed_sound.export(f, format="mp3")
-            print "outputted file: " + f + " start_trim: "+str(start_trim) + " end trim: " + str(end_trim) + " duration: " + str(duration)
+            
+            # the first makes sure we are not running into algorithmic 
+            # issues in pydub when we run the algorithm many times
+            # the second makes sure we don't trim if trimming means 
+            # destroying the file (more or less)
+            # so this is not really a tool for removing ms of sound...
+            if (not(start_trim < 100 and end_trim < 100) and \
+               not(start_trim+50+end_trim+50>duration)):    			
+                trimmed_sound = sound[start_trim:duration-end_trim]
+                trimmed_sound.export(f, format="mp3")
+                print " ".join(['outputted file:', f, 
+                        'start trim:', str(start_trim), 
+                        'end trim:', str(end_trim), 
+                        'duration:', str(duration), 
+                        'new duration:', str(duration-end_trim-start_trim)])
+            else:
+                print "file: " + f + " unchanged"
 
 def walkabout(p_or_f):
     """ searches through a path p_or_f, picking up all files
@@ -96,9 +117,10 @@ def walkabout(p_or_f):
     return return_files
 
 def isMp3Valid(file_path):
-    """ take from: http://blog.eringal.com/python/verifying-that-an-mp3-file-is-valid-in-python/
-with gratitude :-)
-"""
+    """ take from: 
+    http://blog.eringal.com/python/verifying-that-an-mp3-file-is-valid-in-python/
+    with gratitude :-)
+    """
     is_valid = False
     f = open(file_path, 'rb')
     block = f.read(1024)
@@ -122,7 +144,8 @@ with gratitude :-)
         frame_length = 0
         
         if is_valid:
-            is_valid = ord(frame_hdr[1]) & 0xe0 == 0xe0 #validate the rest of the frame_sync bits exist
+            is_valid = ord(frame_hdr[1]) & 0xe0 == 0xe0 
+            #validate the rest of the frame_sync bits exist
             
         if is_valid:
             if ord(frame_hdr[1]) & 0x18 == 0:
@@ -203,17 +226,20 @@ with gratitude :-)
         
         if is_valid:
             padding = ord(frame_hdr[2]) & 2 == 1
-            # padding = ord(frame_hdr[2]) & 1 == 1 -> padding = ord(frame_hdr[2]) & 2
+            # padding = ord(frame_hdr[2]) & 1 == 1 -> 
+            # padding = ord(frame_hdr[2]) & 2
             
             padding_length = 0
             if layer_desc == 'Layer I':
                 if padding:
                     padding_length = 4
-                frame_length = (12 * bitrate * 1000 / sample_rate + padding_length) * 4
+                frame_length = (12 * bitrate * 1000 / \
+                                sample_rate + padding_length) * 4
             else:
                 if padding:
                     padding_length = 1
-                frame_length = 144 * bitrate * 1000 / sample_rate + padding_length
+                frame_length = 144 * bitrate * 1000 / \
+                                sample_rate + padding_length
             is_valid = frame_length > 0
             
             # Verify the next frame
@@ -231,22 +257,21 @@ with gratitude :-)
     return is_valid    
 
 
-def detect_leading_silence(sound, silence_threshold=-50.0, chunk_size=10):
-    # thanks to: ???
-    '''
+def detect_leading_silence(sound, silence_threshold=-SOUND_THRESHOLD, chunk_size=10):
+    """
     sound is a pydub.AudioSegment
     silence_threshold in dB
     chunk_size in ms
 
     iterate over chunks until you find the first one with sound
-    '''
-    trim_ms = 0 # ms
-    while sound[trim_ms:trim_ms+chunk_size].dBFS < silence_threshold:
+    """
+    trim_ms = 0
+    while (sound[trim_ms:trim_ms+chunk_size].dBFS < silence_threshold and
+        trim_ms < len(sound)):
         trim_ms += chunk_size
-
     return trim_ms
 
-
 if __name__ == '__main__':
-    start('in')
+    # start('in') (for use within e.g IDLE)
+    start()
     
